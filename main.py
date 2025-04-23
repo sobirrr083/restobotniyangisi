@@ -1,8 +1,7 @@
-# main.py
 import os
 import logging
 import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
@@ -30,6 +29,9 @@ RATE = "rate"
 # Restaurant data file
 RESTAURANT_DATA_FILE = "restaurants.json"
 
+# Load admin IDs from environment variable
+ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip().isdigit()]
+
 # Load restaurant data from file
 def load_restaurant_data():
     if os.path.exists(RESTAURANT_DATA_FILE):
@@ -45,19 +47,49 @@ def save_restaurant_data(data):
     with open(RESTAURANT_DATA_FILE, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
 
+# Check if user is admin
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
 # Start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send welcome message and show main menu."""
+    user_id = update.effective_user.id
     keyboard = [
-        [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)],
         [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
         [InlineKeyboardButton("⭐ Tavsiya etilgan restoranlar", callback_data=RECOMMEND_RESTAURANTS)],
+    ]
+    if is_admin(user_id):
+        keyboard.insert(0, [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_text = "Assalomu alaykum! Restoran joylashuvi botiga xush kelibsiz!\n"
+    if is_admin(user_id):
+        welcome_text += "Admin sifatida /admin buyrug'ini ishlatib restoranlarni boshqarishingiz mumkin.\n"
+    welcome_text += "Quyidagi amallardan birini tanlang:"
+    
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    
+    return SELECTING_ACTION
+
+# Admin panel command
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Show admin panel with options to add or delete restaurants."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("Sizda admin huquqlari yo'q!")
+        return ConversationHandler.END
+    
+    keyboard = [
+        [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)],
+        [InlineKeyboardButton("📋 Restoranlarni o'chirish", callback_data=VIEW_RESTAURANTS)],
+        [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "Assalomu alaykum! Restoran joylashuvi botiga xush kelibsiz!\n"
-        "Quyidagi amallardan birini tanlang:",
+        "Admin paneli:\nQuyidagi amallardan birini tanlang:",
         reply_markup=reply_markup
     )
     
@@ -68,7 +100,12 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     query = update.callback_query
     await query.answer()
     
+    user_id = query.from_user.id
+    
     if query.data == ADD_RESTAURANT:
+        if not is_admin(user_id):
+            await query.edit_message_text("Sizda restoran qo'shish huquqi yo'q!")
+            return SELECTING_ACTION
         await query.edit_message_text("Restoran nomini kiriting:")
         return ADDING_NAME
     
@@ -86,8 +123,10 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             restaurant_list += f"🍽️ *{name}*\n📍 Manzil: {info['location']}\n⭐ Baho: {rating_text}\n\n"
         
         keyboard = []
+        if is_admin(user_id):
+            for name in restaurants.keys():
+                keyboard.append([InlineKeyboardButton(f"❌ {name} - o'chirish", callback_data=f"{DELETE_RESTAURANT}:{name}")])
         for name in restaurants.keys():
-            keyboard.append([InlineKeyboardButton(f"❌ {name} - o'chirish", callback_data=f"{DELETE_RESTAURANT}:{name}")])
             keyboard.append([InlineKeyboardButton(f"⭐ {name} - baholash", callback_data=f"{RATE}:{name}")])
         
         keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)])
@@ -104,7 +143,6 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
             return SELECTING_ACTION
         
-        # Filter restaurants with ratings and sort by rating (highest first)
         rated_restaurants = {name: info for name, info in restaurants.items() if info.get('rating')}
         if not rated_restaurants:
             keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)]]
@@ -133,10 +171,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     
     elif query.data == CANCEL:
         keyboard = [
-            [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)],
             [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
             [InlineKeyboardButton("⭐ Tavsiya etilgan restoranlar", callback_data=RECOMMEND_RESTAURANTS)],
         ]
+        if is_admin(user_id):
+            keyboard.insert(0, [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
@@ -146,6 +185,9 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return SELECTING_ACTION
     
     elif query.data.startswith(DELETE_RESTAURANT):
+        if not is_admin(user_id):
+            await query.edit_message_text("Sizda restoran o'chirish huquqi yo'q!")
+            return SELECTING_ACTION
         restaurant_name = query.data.split(":", 1)[1]
         keyboard = [
             [
@@ -162,6 +204,9 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return SELECTING_ACTION
     
     elif query.data.startswith(CONFIRM_DELETE):
+        if not is_admin(user_id):
+            await query.edit_message_text("Sizda restoran o'chirish huquqi yo'q!")
+            return SELECTING_ACTION
         restaurant_name = query.data.split(":", 1)[1]
         restaurants = load_restaurant_data()
         if restaurant_name in restaurants:
@@ -171,10 +216,7 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             await query.edit_message_text("Bunday restoran topilmadi.")
         
-        # Return to main menu after short delay
-        keyboard = [
-            [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]
-        ]
+        keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("Restoran o'chirildi. Asosiy menyuga qaytish uchun tugmani bosing.", reply_markup=reply_markup)
         return SELECTING_ACTION
@@ -214,10 +256,7 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             else:
                 await query.edit_message_text("Bunday restoran topilmadi.")
         
-        # Return to main menu after short delay
-        keyboard = [
-            [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]
-        ]
+        keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("Restoran baholandi. Asosiy menyuga qaytish uchun tugmani bosing.", reply_markup=reply_markup)
         return SELECTING_ACTION
@@ -226,12 +265,18 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 # Handle restaurant name input
 async def add_restaurant_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Sizda restoran qo'shish huquqi yo'q!")
+        return SELECTING_ACTION
     context.user_data["restaurant_name"] = update.message.text
     await update.message.reply_text("Endi restoran joylashuvini (manzilini) kiriting:")
     return ADDING_LOCATION
 
 # Handle restaurant location input
 async def add_restaurant_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Sizda restoran qo'shish huquqi yo'q!")
+        return SELECTING_ACTION
     name = context.user_data["restaurant_name"]
     location = update.message.text
     
@@ -239,9 +284,7 @@ async def add_restaurant_location(update: Update, context: ContextTypes.DEFAULT_
     restaurants[name] = {"location": location}
     save_restaurant_data(restaurants)
     
-    keyboard = [
-        [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]
-    ]
+    keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
@@ -265,7 +308,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     """Start the bot."""
-    # Create the Application
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("No token provided. Set TELEGRAM_BOT_TOKEN environment variable.")
@@ -273,9 +315,11 @@ def main() -> None:
     
     application = Application.builder().token(token).build()
 
-    # Create conversation handler with the states
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            CommandHandler("admin", admin_panel),
+        ],
         states={
             SELECTING_ACTION: [
                 CallbackQueryHandler(menu_actions),
@@ -296,7 +340,6 @@ def main() -> None:
     application.add_handler(conv_handler)
     application.add_error_handler(error_handler)
 
-    # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
