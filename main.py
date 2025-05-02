@@ -4,6 +4,7 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 from dotenv import load_dotenv
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +26,7 @@ DELETE_RESTAURANT = "delete_restaurant"
 CONFIRM_DELETE = "confirm_delete"
 CANCEL = "cancel"
 RATE = "rate"
+VIEW_RESTAURANT = "view_restaurant"
 
 # Restaurant data file
 RESTAURANT_DATA_FILE = "restaurants.json"
@@ -103,18 +105,19 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     """Show admin panel with options."""
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        await update.message.reply_text("Sizda admin0194 huquqlari yo'q!")
+        await update.message.reply_text("Sizda admin huquqlari yo'q!")
         return ConversationHandler.END
     
     keyboard = [
         [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)],
         [InlineKeyboardButton("🗑️ Restoran o'chirish", callback_data=DELETE_RESTAURANT)],
+        [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
         [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "Admin paneli:\nQuyidagi amallardan birini tanlang:",
+        "Admin offAdmin paneli:\nQuyidagi amallardan birini tanlang:",
         reply_markup=reply_markup
     )
     
@@ -142,22 +145,38 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
             return SELECTING_ACTION
         
-        restaurant_list = "📋 Restoranlar ro'yxati:\n\n"
-        for name, info in restaurants.items():
-            rating_text = f"{info.get('rating', 'Baholanmagan')} ⭐" if info.get('rating') else "Baholanmagan"
-            restaurant_list += f"🍽️ *{name}*\n📍 Manzil: {info['location']}\n⭐ Baho: {rating_text}\n\n"
-        
         keyboard = []
-        if is_admin(user_id):
-            for name in restaurants.keys():
-                keyboard.append([InlineKeyboardButton(f"❌ {name} - o'chirish", callback_data=f"{DELETE_RESTAURANT}:{name}")])
         for name in restaurants.keys():
-            keyboard.append([InlineKeyboardButton(f"⭐ {name} - baholash", callback_data=f"{RATE}:{name}")])
-        
+            keyboard.append([InlineKeyboardButton(f"🍽️ {name}", callback_data=f"{VIEW_RESTAURANT}:{name}")])
         keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(restaurant_list, reply_markup=reply_markup, parse_mode="Markdown")
+        await query.edit_message_text("Restoranlarni tanlang:", reply_markup=reply_markup)
+        return SELECTING_ACTION
+    
+    elif query.data.startswith(VIEW_RESTAURANT):
+        restaurant_name = query.data.split(":", 1)[1]
+        restaurants = load_restaurant_data()
+        if restaurant_name in restaurants:
+            info = restaurants[restaurant_name]
+            rating_text = f"{info.get('rating', 'Baholanmagan')} ⭐" if info.get('rating') else "Baholanmagan"
+            restaurant_info = (
+                f"🍽️ *{restaurant_name}*\n"
+                f"📍 Manzil: {info['location']}\n"
+                f"⭐ Baho: {rating_text}\n"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton(f"⭐ Baholash", callback_data=f"{RATE}:{restaurant_name}")]
+            ]
+            if is_admin(user_id):
+                keyboard.append([InlineKeyboardButton(f"❌ O'chirish", callback_data=f"{CONFIRM_DELETE}:{restaurant_name}")])
+            keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data=VIEW_RESTAURANTS)])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(restaurant_info, reply_markup=reply_markup, parse_mode="Markdown")
+        else:
+            await query.edit_message_text("Bunday restoran topilmadi.")
         return SELECTING_ACTION
     
     elif query.data == RECOMMEND_RESTAURANTS:
