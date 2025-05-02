@@ -59,6 +59,7 @@ def is_admin(user_id: int) -> bool:
 
 # Get main menu keyboard based on user role
 def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    restaurants = load_restaurant_data()
     keyboard = [
         [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
         [InlineKeyboardButton("⭐ Tavsiya etilgan restoranlar", callback_data=RECOMMEND_RESTAURANTS)],
@@ -70,6 +71,21 @@ def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🗑️ Restoranni o'chirish", callback_data=DELETE_RESTAURANT)],
             [InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)],
         ]
+    return InlineKeyboardMarkup(keyboard)
+
+# Get dynamic restaurant list keyboard
+def get_restaurant_list_keyboard(action: str, user_id: int) -> InlineKeyboardMarkup:
+    restaurants = load_restaurant_data()
+    keyboard = []
+    if restaurants:
+        for name in restaurants.keys():
+            if action == EDIT_RESTAURANT and is_admin(user_id):
+                keyboard.append([InlineKeyboardButton(f"✏️ {name}", callback_data=f"{EDIT_RESTAURANT}:{name}")])
+            elif action == DELETE_RESTAURANT and is_admin(user_id):
+                keyboard.append([InlineKeyboardButton(f"❌ {name}", callback_data=f"{CONFIRM_DELETE}:{name}")])
+            elif action == VIEW_RESTAURANTS:
+                keyboard.append([InlineKeyboardButton(f"🍽️ {name}", callback_data=f"{VIEW_RESTAURANT}:{name}")])
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)])
     return InlineKeyboardMarkup(keyboard)
 
 # Start command handler
@@ -126,13 +142,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if not is_admin(user_id):
             await query.edit_message_text("Sizda restoran tahrirlash huquqi yo'q!")
             return SELECTING_ACTION
+        reply_markup = get_restaurant_list_keyboard(EDIT_RESTAURANT, user_id)
         if not restaurants:
-            await query.edit_message_text("Hech qanday restoran topilmadi.")
-            return SELECTING_ACTION
-        keyboard = [[InlineKeyboardButton(f"✏️ {name}", callback_data=f"{EDIT_RESTAURANT}:{name}") for name in restaurants.keys()]]
-        keyboard.append([InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Tahrirlash uchun restoran tanlang:", reply_markup=reply_markup)
+            await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
+        else:
+            await query.edit_message_text("Tahrirlash uchun restoran tanlang:", reply_markup=reply_markup)
         return SELECTING_ACTION
 
     elif query.data.startswith(EDIT_RESTAURANT + ":"):
@@ -145,15 +159,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ADDING_LOCATION
 
     elif query.data == VIEW_RESTAURANTS:
+        reply_markup = get_restaurant_list_keyboard(VIEW_RESTAURANTS, user_id)
         if not restaurants:
-            keyboard = [[InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
-            return SELECTING_ACTION
-        keyboard = [[InlineKeyboardButton(f"🍽️ {name}", callback_data=f"{VIEW_RESTAURANT}:{name}") for name in restaurants.keys()]]
-        keyboard.append([InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Restoranlarni tanlang:", reply_markup=reply_markup)
+        else:
+            await query.edit_message_text("Restoranlarni tanlang:", reply_markup=reply_markup)
         return SELECTING_ACTION
 
     elif query.data.startswith(VIEW_RESTAURANT):
@@ -206,15 +216,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if not is_admin(user_id):
             await query.edit_message_text("Sizda restoran o'chirish huquqi yo'q!")
             return SELECTING_ACTION
+        reply_markup = get_restaurant_list_keyboard(DELETE_RESTAURANT, user_id)
         if not restaurants:
-            keyboard = [[InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
-            return SELECTING_ACTION
-        keyboard = [[InlineKeyboardButton(f"❌ {name}", callback_data=f"{CONFIRM_DELETE}:{name}") for name in restaurants.keys()]]
-        keyboard.append([InlineKeyboardButton("🔙 Orqaga qaytish", callback_data=CANCEL)])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("O'chirmoqchi bo'lgan restoranni tanlang:", reply_markup=reply_markup)
+        else:
+            await query.edit_message_text("O'chirmoqchi bo'lgan restoranni tanlang:", reply_markup=reply_markup)
         return SELECTING_ACTION
 
     elif query.data.startswith(CONFIRM_DELETE):
