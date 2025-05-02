@@ -51,18 +51,22 @@ def save_restaurant_data(data):
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# Start command handler
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Send welcome message and show main menu."""
-    user_id = update.effective_user.id
+# Get main menu keyboard based on user role
+def get_main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
         [InlineKeyboardButton("⭐ Tavsiya etilgan restoranlar", callback_data=RECOMMEND_RESTAURANTS)],
     ]
     if is_admin(user_id):
         keyboard.insert(0, [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard.append([InlineKeyboardButton("🗑️ Restoran o'chirish", callback_data=DELETE_RESTAURANT)])
+    return InlineKeyboardMarkup(keyboard)
+
+# Start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Send welcome message and show main menu."""
+    user_id = update.effective_user.id
+    reply_markup = get_main_menu_keyboard(user_id)
     
     welcome_text = "Assalomu alaykum! Restoran joylashuvi botiga xush kelibsiz!\n"
     if is_admin(user_id):
@@ -73,17 +77,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     
     return SELECTING_ACTION
 
+# Stop command handler
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """End the conversation."""
+    await update.message.reply_text("Bot to'xtatildi. Qayta boshlash uchun /start ni bosing.")
+    return ConversationHandler.END
+
+# Help command handler
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Provide help information."""
+    help_text = (
+        "📖 Yordam:\n\n"
+        "Bu bot restoranlarni boshqarish va tavsiya qilish uchun ishlatiladi.\n"
+        "Quyidagi buyruqlar mavjud:\n"
+        "/start - Botni boshlash\n"
+        "/stop - Botni to'xtatish\n"
+        "/help - Ushbu yordam xabarini ko'rish\n"
+    )
+    if is_admin(update.effective_user.id):
+        help_text += "/admin - Admin panelini ochish\n"
+    await update.message.reply_text(help_text)
+
 # Admin panel command
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show admin panel with options to add or delete restaurants."""
+    """Show admin panel with options."""
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        await update.message.reply_text("Sizda admin huquqlari yo'q!")
+        await update.message.reply_text("Sizda admin0194 huquqlari yo'q!")
         return ConversationHandler.END
     
     keyboard = [
         [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)],
-        [InlineKeyboardButton("📋 Restoranlarni o'chirish", callback_data=VIEW_RESTAURANTS)],
+        [InlineKeyboardButton("🗑️ Restoran o'chirish", callback_data=DELETE_RESTAURANT)],
         [InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -170,37 +195,31 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return SELECTING_ACTION
     
     elif query.data == CANCEL:
-        keyboard = [
-            [InlineKeyboardButton("📋 Restoranlarni ko'rish", callback_data=VIEW_RESTAURANTS)],
-            [InlineKeyboardButton("⭐ Tavsiya etilgan restoranlar", callback_data=RECOMMEND_RESTAURANTS)],
-        ]
-        if is_admin(user_id):
-            keyboard.insert(0, [InlineKeyboardButton("🍽️ Restoran qo'shish", callback_data=ADD_RESTAURANT)])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        reply_markup = get_main_menu_keyboard(user_id)
         await query.edit_message_text(
             "Asosiy menyu:\nQuyidagi amallardan birini tanlang:",
             reply_markup=reply_markup
         )
         return SELECTING_ACTION
     
-    elif query.data.startswith(DELETE_RESTAURANT):
+    elif query.data == DELETE_RESTAURANT:
         if not is_admin(user_id):
             await query.edit_message_text("Sizda restoran o'chirish huquqi yo'q!")
             return SELECTING_ACTION
-        restaurant_name = query.data.split(":", 1)[1]
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Ha", callback_data=f"{CONFIRM_DELETE}:{restaurant_name}"),
-                InlineKeyboardButton("❌ Yo'q", callback_data=CANCEL)
-            ]
-        ]
+        restaurants = load_restaurant_data()
+        if not restaurants:
+            keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("Hech qanday restoran topilmadi.", reply_markup=reply_markup)
+            return SELECTING_ACTION
+        
+        keyboard = []
+        for name in restaurants.keys():
+            keyboard.append([InlineKeyboardButton(f"❌ {name}", callback_data=f"{CONFIRM_DELETE}:{name}")])
+        keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(
-            f"Siz rostdan ham '{restaurant_name}' restoranini o'chirmoqchimisiz?",
-            reply_markup=reply_markup
-        )
+        await query.edit_message_text("O'chirmoqchi bo'lgan restoraningizni tanlang:", reply_markup=reply_markup)
         return SELECTING_ACTION
     
     elif query.data.startswith(CONFIRM_DELETE):
@@ -216,9 +235,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             await query.edit_message_text("Bunday restoran topilmadi.")
         
-        keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Restoran o'chirildi. Asosiy menyuga qaytish uchun tugmani bosing.", reply_markup=reply_markup)
+        reply_markup = get_main_menu_keyboard(user_id)
+        await query.edit_message_text(
+            "Restoran o'chirildi. Asosiy menyuga qaytish uchun tugmani bosing.",
+            reply_markup=reply_markup
+        )
         return SELECTING_ACTION
         
     elif query.data.startswith(RATE):
@@ -256,9 +277,11 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             else:
                 await query.edit_message_text("Bunday restoran topilmadi.")
         
-        keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Restoran baholandi. Asosiy menyuga qaytish uchun tugmani bosing.", reply_markup=reply_markup)
+        reply_markup = get_main_menu_keyboard(user_id)
+        await query.edit_message_text(
+            "Restoran baholandi. Asosiy menyuga qaytish uchun tugmani bosing.",
+            reply_markup=reply_markup
+        )
         return SELECTING_ACTION
     
     return SELECTING_ACTION
@@ -284,8 +307,7 @@ async def add_restaurant_location(update: Update, context: ContextTypes.DEFAULT_
     restaurants[name] = {"location": location}
     save_restaurant_data(restaurants)
     
-    keyboard = [[InlineKeyboardButton("🔙 Asosiy menyu", callback_data=CANCEL)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = get_main_menu_keyboard(update.effective_user.id)
     
     await update.message.reply_text(
         f"Restoran muvaffaqiyatli qo'shildi!\n\n"
@@ -334,10 +356,15 @@ def main() -> None:
                 CallbackQueryHandler(menu_actions),
             ],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[
+            CommandHandler("start", start),
+            CommandHandler("stop", stop),
+            CommandHandler("help", help_command),
+        ],
     )
 
     application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("help", help_command))
     application.add_error_handler(error_handler)
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
