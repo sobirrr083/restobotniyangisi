@@ -241,7 +241,7 @@ async def menu_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text("O'chirmoqchi bo'lgan restoraningizni tanlang:", reply_markup=reply_markup)
+        await query.edit_message_text("O'chirmoqchi bo'lgan restoraningizni tanlang:",meals.append([InlineKeyboardButton("🔙 Orqaga", callback_data=CANCEL)])
         return SELECTING_ACTION
     
     elif query.data.startswith(CONFIRM_DELETE):
@@ -356,14 +356,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         logger.warning("Cannot send error message: No effective message available")
 
-async def setup_application(application: Application) -> None:
-    """Ensure webhook is disabled before starting polling."""
-    try:
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted successfully")
-    except Exception as e:
-        logger.error(f"Failed to delete webhook: {e}")
-
 def main() -> None:
     """Start the bot."""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -373,8 +365,12 @@ def main() -> None:
     
     application = Application.builder().token(token).build()
 
-    # Setup application (delete webhook)
-    application.job_queue.run_once(lambda context: setup_application(application), 0)
+    # Delete webhook before starting polling
+    try:
+        application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
+    except Exception as e:
+        logger.error(f"Failed to delete webhook: {e}")
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -383,7 +379,7 @@ def main() -> None:
         ],
         states={
             SELECTING_ACTION: [
-                CallbackQueryHandler(menu_actions, per_message=True),
+                CallbackQueryHandler(menu_actions),
             ],
             ADDING_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_restaurant_name),
@@ -392,7 +388,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_restaurant_location),
             ],
             WAITING_FOR_RATING: [
-                CallbackQueryHandler(menu_actions, per_message=True),
+                CallbackQueryHandler(menu_actions),
             ],
         },
         fallbacks=[
@@ -400,7 +396,6 @@ def main() -> None:
             CommandHandler("stop", stop),
             CommandHandler("help", help_command),
         ],
-        per_message=True  # Ensure proper tracking for callback queries
     )
 
     application.add_handler(conv_handler)
