@@ -4,7 +4,6 @@ import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 from dotenv import load_dotenv
-import uuid
 
 # Load environment variables
 load_dotenv()
@@ -41,13 +40,17 @@ def load_restaurant_data():
             try:
                 return json.load(file)
             except json.JSONDecodeError:
+                logger.error("Failed to decode restaurants.json")
                 return {}
     return {}
 
 # Save restaurant data to file
 def save_restaurant_data(data):
-    with open(RESTAURANT_DATA_FILE, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=4)
+    try:
+        with open(RESTAURANT_DATA_FILE, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"Failed to save restaurant data: {e}")
 
 # Check if user is admin
 def is_admin(user_id: int) -> bool:
@@ -117,7 +120,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "Admin offAdmin paneli:\nQuyidagi amallardan birini tanlang:",
+        "Admin paneli:\nQuyidagi amallardan birini tanlang:",
         reply_markup=reply_markup
     )
     
@@ -339,13 +342,27 @@ async def add_restaurant_location(update: Update, context: ContextTypes.DEFAULT_
 
 # Error handler
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a message to the user."""
+    """Log the error and send a message to the user if possible."""
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     
-    if update.effective_message:
-        await update.effective_message.reply_text(
-            "Xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
-        )
+    # Check if update and effective_message exist before replying
+    if update and hasattr(update, 'effective_message') and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "Xatolik yuz berdi. Iltimos qaytadan urinib ko'ring."
+            )
+        except Exception as e:
+            logger.error(f"Failed to send error message: {e}")
+    else:
+        logger.warning("Cannot send error message: No effective message available")
+
+async def setup_application(application: Application) -> None:
+    """Ensure webhook is disabled before starting polling."""
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
+    except Exception as e:
+        logger.error(f"Failed to delete webhook: {e}")
 
 def main() -> None:
     """Start the bot."""
@@ -356,6 +373,9 @@ def main() -> None:
     
     application = Application.builder().token(token).build()
 
+    # Setup application (delete webhook)
+    application.job_queue.run_once(lambda context: setup_application(application), 0)
+
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -363,7 +383,7 @@ def main() -> None:
         ],
         states={
             SELECTING_ACTION: [
-                CallbackQueryHandler(menu_actions),
+                CallbackQueryHandler(menu_actions, per_message=True),
             ],
             ADDING_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_restaurant_name),
@@ -372,7 +392,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_restaurant_location),
             ],
             WAITING_FOR_RATING: [
-                CallbackQueryHandler(menu_actions),
+                CallbackQueryHandler(menu_actions, per_message=True),
             ],
         },
         fallbacks=[
@@ -380,13 +400,18 @@ def main() -> None:
             CommandHandler("stop", stop),
             CommandHandler("help", help_command),
         ],
+        per_message=True  # Ensure proper tracking for callback queries
     )
 
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
     application.add_error_handler(error_handler)
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"Failed to start polling: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
